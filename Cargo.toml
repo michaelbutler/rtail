@@ -1,0 +1,8 @@
+[package]
+name = "rtail"
+version = "0.1.0"
+authors = ["Michael Butler <michael@butlerpc.net>"]
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.18", features = ["derive"] }
