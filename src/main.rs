@@ -8,7 +8,7 @@
 
 use clap::Parser;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::vec;
 use std::{io, process::ExitCode};
 
@@ -52,17 +52,21 @@ fn tail(input: Input, num_lines: usize) -> io::Result<()> {
 
 fn tail_seekable(mut file: File, num_lines: usize) -> io::Result<()> {
     // Get the file size
-    let file_size = file.seek(SeekFrom::End(0)).expect("File should be seekable");
+    let file_size = file
+        .seek(SeekFrom::End(0))
+        .expect("File should be seekable");
     if file_size == 0 {
-        return Ok(());  // Empty file
+        return Ok(()); // Empty file
     }
 
     // Set a flag if we stripped the last LF or not.
     // Because if we did NOT, we need to make sure we don't add an LF when printing results.
     // This is to match the behavior of the native tail program.
     let mut last_char_buffer = [0u8; 1];
-    file.seek(SeekFrom::End(-1)).expect("File should be seekable");
-    file.read_exact(&mut last_char_buffer).expect("File should be readable");
+    file.seek(SeekFrom::End(-1))
+        .expect("File should be seekable");
+    file.read_exact(&mut last_char_buffer)
+        .expect("File should be readable");
     let stripped_last_lf = last_char_buffer[0] == b'\n';
 
     // Read BUFFER_SIZE or the file_size, whichever is smaller
@@ -83,7 +87,7 @@ fn tail_seekable(mut file: File, num_lines: usize) -> io::Result<()> {
         }
 
         // Start position of read operation
-        current_pointer = current_pointer - chunk_size; 
+        current_pointer = current_pointer - chunk_size;
 
         // Now Seek Backwards
         _ = file.seek(SeekFrom::Start(current_pointer as u64));
@@ -93,7 +97,7 @@ fn tail_seekable(mut file: File, num_lines: usize) -> io::Result<()> {
         match read_result {
             Ok(()) => {
                 // println!("Read {} bytes...", chunk.len());
-            },
+            }
             Err(e) => {
                 eprintln!("Error reading file: {}", e);
                 return Err(e);
@@ -185,28 +189,93 @@ fn tail_non_seekable(stdin: io::Stdin, num_lines: usize) -> io::Result<()> {
     Ok(())
 }
 
-fn print_chars<R: BufRead>(mut reader: R, n: u32) {
-    let n = n as usize;
-    let buffer_size = n.min(4096);
-    let mut buffer = vec![0; buffer_size];
-    let mut bytes_remaining = n;
+/// tail a number of characters from Input enum
+fn tailc(input: Input, numchars: usize) -> io::Result<()> {
+    match input {
+        Input::File(file) => tailc_seekable(file, numchars),
+        // _ => Err(io::Error::new(io::ErrorKind::Other, "Not implemented yet")),
+        Input::Stdin(stdin) => tailc_non_seekable(stdin, numchars),
+    }
+}
 
-    while bytes_remaining > 0 {
-        let bytes_to_read = bytes_remaining.min(buffer.len());
-        match reader.read(&mut buffer[..bytes_to_read]) {
-            Ok(0) => break,
-            Ok(bytes_read) => {
-                // This has the possibilty of printing invalid UTF-8 characters
-                // But it should not crash.
-                io::stdout().write_all(&buffer[..bytes_read]).unwrap();
-                bytes_remaining -= bytes_read;
+/// tail a number of characters from stdin
+fn tailc_non_seekable(stdin: io::Stdin, num_chars: usize) -> io::Result<()> {
+    let mut circular_buffer = Vec::with_capacity(num_chars);
+    let mut current_index = 0;
+
+    let reader = BufReader::new(stdin);
+    for byt in reader.bytes() {
+        let byt = byt?;
+        if circular_buffer.len() < num_chars {
+            circular_buffer.push(byt);
+        } else {
+            circular_buffer[current_index] = byt;
+            current_index = (current_index + 1) % num_chars;
+        }
+    }
+
+    // Print bytes in correct order
+    if !circular_buffer.is_empty() {
+        let mut index = if circular_buffer.len() < num_chars {
+            0
+        } else {
+            current_index
+        };
+
+        for _ in 0..circular_buffer.len() {
+            // this is absolutely terrible
+            std::io::stdout().write(std::slice::from_ref(&circular_buffer[index]))?;
+            index = (index + 1) % circular_buffer.len();
+        }
+    }
+
+    Ok(())
+}
+
+/// tail a number of characters from an opened file handle
+fn tailc_seekable(mut file: File, numchars: usize) -> io::Result<()> {
+    // Get the file size
+    let file_size = file
+        .seek(SeekFrom::End(0))
+        .expect("File should be seekable");
+    if file_size == 0 {
+        return Ok(()); // Empty file
+    }
+
+    let mut chunk_size: usize = BUFFER_SIZE.min(file_size as usize);
+    chunk_size = chunk_size.min(numchars);
+    let mut gathered_chars: usize = 0;
+    let mut current_pointer = file_size as usize;
+
+    while gathered_chars < numchars && current_pointer > 0 {
+        if chunk_size > current_pointer {
+            chunk_size = current_pointer;
+        }
+
+        // Start pos of read operation
+        current_pointer = current_pointer - chunk_size;
+
+        // Now seek backwards
+        _ = file.seek(SeekFrom::Start(current_pointer as u64));
+
+        let mut chunk: Vec<u8> = vec![0; chunk_size];
+        let read_result = file.read_exact(&mut chunk);
+
+        match read_result {
+            Ok(()) => {
+                // println!("Read {} bytes...", chunk.len());
             }
             Err(e) => {
                 eprintln!("Error reading file: {}", e);
-                return;
+                return Err(e);
             }
         }
+
+        std::io::stdout().write_all(&chunk).unwrap();
+        gathered_chars += chunk.len();
     }
+
+    Ok(())
 }
 
 fn main() -> ExitCode {
@@ -223,7 +292,7 @@ fn main() -> ExitCode {
         Some(f) => {
             let file = File::open(f).unwrap();
             Input::File(file)
-        },
+        }
         None => Input::Stdin(io::stdin()),
     };
 
@@ -235,10 +304,12 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         },
-        _ => {
-            eprint!("Not supported yet!!");
-            ExitCode::FAILURE
+        _ => match tailc(input, chars as usize) {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                return ExitCode::FAILURE;
+            }
         },
-        // _ => print_chars(&mut br, chars),
     }
 }
