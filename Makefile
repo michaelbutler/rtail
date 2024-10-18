@@ -1,4 +1,5 @@
 SHELL := /bin/bash
+CURRENT_DIR := $(shell pwd)
 .PHONY: help
 
 help:
@@ -17,6 +18,11 @@ lint: ## Lint the project using cargo
 fmt: ## Format the project using cargo
 	@rustup component add rustfmt 2> /dev/null
 	cargo fmt
+
+rundockertest: ## Test the project using bats
+	mkdir -p targetdocker
+	docker build -t rtail-app:latest .
+	docker run --rm rtail-app:latest test/test.bats
 
 bump: ## Bump the version number
 	@echo "Current version is $(shell cargo pkgid | cut -d# -f2)"

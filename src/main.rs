@@ -280,6 +280,10 @@ fn tailc_seekable(mut file: File, numchars: usize) -> io::Result<()> {
 
 fn main() -> ExitCode {
     let args = Args::parse();
+    _main_inner(args)
+}
+
+fn _main_inner(args: Args) -> ExitCode {
     let numlines = args.number;
     let chars = args.chars;
 
